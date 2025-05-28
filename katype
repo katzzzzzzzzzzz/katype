@@ -1,0 +1,376 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Katype with Accuracy & Streak</title>
+  <style>
+    body {
+      background: #121212;
+      color: #ddd;
+      font-family: 'Inter', sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 40px 20px;
+    }
+    h1 {
+      color: #a782ec;
+      font-size: 56px;
+      margin-bottom: 10px;
+    }
+    .stats {
+      font-size: 18px;
+      margin-bottom: 10px;
+    }
+    #wordContainer {
+      max-width: 800px;
+      font-size: 28px;
+      background: #1e1e1e;
+      padding: 20px;
+      border-radius: 12px;
+      box-shadow: 0 0 12px #a782ec88;
+      margin-bottom: 10px;
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      user-select: none;
+    }
+    .word {
+      margin: 3px 6px;
+    }
+    .correct {
+      color: #c3e88d;
+    }
+    .incorrect {
+      color: #ff5370;
+    }
+    .highlight {
+      text-decoration: underline;
+      color: #d4bfff;
+    }
+    #inputBox {
+      font-size: 24px;
+      padding: 10px;
+      border-radius: 8px;
+      border: none;
+      width: 320px;
+      background: #2a2a2a;
+      color: white;
+      margin-bottom: 10px;
+      box-shadow: 0 0 10px #864dcf;
+      text-align: center;
+      outline: none;
+    }
+    button {
+      background: #a782ec;
+      border: none;
+      color: #111;
+      font-weight: bold;
+      padding: 8px 20px;
+      margin: 5px;
+      border-radius: 8px;
+      cursor: pointer;
+      user-select: none;
+      box-shadow: 0 0 10px #a782ec88;
+    }
+    button:disabled {
+      background: #444;
+      cursor: not-allowed;
+      box-shadow: none;
+      color: #999;
+    }
+    #graphCanvas {
+      background: #1e1e1e;
+      border-radius: 12px;
+      box-shadow: 0 0 12px #a782ec88;
+      margin-top: 15px;
+    }
+  </style>
+</head>
+<body>
+  <h1>Katype</h1>
+
+  <div class="stats">
+    <span id="timer">Time: 30s</span> | 
+    <span id="wpm">WPM: 0</span> | 
+    <span id="accuracy">Accuracy: 100%</span> | 
+    <span id="streak">Streak: 0</span> | 
+    <span id="winStreak">Win Streak: 0</span>
+  </div>
+
+  <div id="wordContainer"></div>
+  <input id="inputBox" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="type here..." />
+  <br />
+  <button id="resetBtn">Ganti kata</button>
+  <button id="freezeBtn" disabled>Freeze Time (5s)</button>
+
+  <canvas id="graphCanvas" width="800" height="100"></canvas>
+
+<script>
+  // Kata random panjang, huruf kecil, tanpa tanda baca
+  const words = [
+    "ini adalah kalimat acak untuk mengetik cepat dan latihan skill mengetik dengan benar tanpa salah",
+    "berlatihlah setiap hari agar kemampuan mengetikmu meningkat dan kamu bisa mengetik dengan cepat",
+    "kamu harus fokus dan jangan mudah menyerah saat menghadapi tantangan mengetik yang sulit",
+    "kata kata ini sengaja dibuat panjang agar kamu bisa merasakan latihan mengetik dengan lebih nyata",
+    "tetap semangat dan jangan lupa untuk beristirahat agar mata dan tangan tidak cepat lelah"
+  ];
+
+  let currentText = "";
+  let currentPos = 0;
+  let score = 0;
+  let totalTyped = 0;
+  let correctTyped = 0;
+  let startTime;
+  let timeLeft = 30;
+  let timerInterval;
+  let isRunning = false;
+  let incorrectCount = 0;
+  const maxIncorrect = 10;
+
+  let currentStreak = 0;
+  let maxStreak = 0;
+  let winStreak = 0;
+
+  const wordContainer = document.getElementById("wordContainer");
+  const inputBox = document.getElementById("inputBox");
+  const timerDisplay = document.getElementById("timer");
+  const wpmDisplay = document.getElementById("wpm");
+  const accuracyDisplay = document.getElementById("accuracy");
+  const streakDisplay = document.getElementById("streak");
+  const winStreakDisplay = document.getElementById("winStreak");
+  const resetBtn = document.getElementById("resetBtn");
+  const freezeBtn = document.getElementById("freezeBtn");
+  const graphCanvas = document.getElementById("graphCanvas");
+  const ctx = graphCanvas.getContext("2d");
+
+  // Data untuk grafik: {time, correct:boolean, streak}
+  let inputLog = [];
+
+  // Fungsi pilih kalimat acak
+  function pickRandomText() {
+    const idx = Math.floor(Math.random() * words.length);
+    currentText = words[idx];
+    currentPos = 0;
+    renderText();
+  }
+
+  // Render kalimat dengan highlight posisi current
+  function renderText() {
+    wordContainer.innerHTML = "";
+    for (let i = 0; i < currentText.length; i++) {
+      const span = document.createElement("span");
+      const char = currentText[i];
+      span.textContent = char;
+      if (i === currentPos) {
+        span.classList.add("highlight");
+      }
+      if (i < currentPos) {
+        const typedChar = inputBox.value[i];
+        if (typedChar === char) {
+          span.classList.add("correct");
+        } else {
+          span.classList.add("incorrect");
+        }
+      }
+      wordContainer.appendChild(span);
+    }
+  }
+
+  function updateTimer() {
+    timerDisplay.textContent = `Time: ${timeLeft}s`;
+    if (timeLeft <= 0) {
+      endGame("Waktu habis!");
+    }
+  }
+
+  function calculateWPM() {
+    const elapsedMinutes = (30 - timeLeft) / 60;
+    return elapsedMinutes > 0 ? Math.round((correctTyped / 5) / elapsedMinutes) : 0;
+  }
+
+  function calculateAccuracy() {
+    return totalTyped > 0 ? Math.round((correctTyped / totalTyped) * 100) : 100;
+  }
+
+  function updateStats() {
+    wpmDisplay.textContent = `WPM: ${calculateWPM()}`;
+    accuracyDisplay.textContent = `Accuracy: ${calculateAccuracy()}%`;
+    streakDisplay.textContent = `Streak: ${currentStreak}`;
+    winStreakDisplay.textContent = `Win Streak: ${winStreak}`;
+  }
+
+  function startGame() {
+    if (!isRunning) {
+      isRunning = true;
+      startTime = Date.now();
+      timerInterval = setInterval(() => {
+        timeLeft--;
+        updateTimer();
+        updateStats();
+        drawGraph();
+        if (timeLeft <= 0) {
+          endGame("Waktu habis!");
+        }
+      }, 1000);
+    }
+  }
+
+  function endGame(message) {
+    clearInterval(timerInterval);
+    inputBox.disabled = true;
+    inputBox.placeholder = message;
+
+    // Reset streak if lost
+    if (incorrectCount >= maxIncorrect || timeLeft <= 0) {
+      currentStreak = 0;
+      winStreak = 0;
+      updateStats();
+    }
+  }
+
+  // Reset game state
+  function resetGame() {
+    clearInterval(timerInterval);
+    inputBox.disabled = false;
+    inputBox.value = "";
+    timeLeft = 30;
+    isRunning = false;
+    incorrectCount = 0;
+    currentStreak = 0;
+    score = 0;
+    totalTyped = 0;
+    correctTyped = 0;
+    inputLog = [];
+    freezeBtn.disabled = true;
+    inputBox.placeholder = "type here...";
+    pickRandomText();
+    updateTimer();
+    updateStats();
+    drawGraph();
+    inputBox.focus();
+  }
+
+  // Menggambar grafik streak dan kesalahan
+  function drawGraph() {
+    ctx.clearRect(0, 0, graphCanvas.width, graphCanvas.height);
+    if (inputLog.length === 0) return;
+
+    // Koordinat dasar
+    const w = graphCanvas.width;
+    const h = graphCanvas.height;
+    const maxTime = 30; // detik
+
+    // Skala horizontal sesuai waktu
+    ctx.beginPath();
+    ctx.strokeStyle = "#a782ec66";
+    ctx.moveTo(0, h - 20);
+    ctx.lineTo(w, h - 20);
+    ctx.stroke();
+
+    // Gambar titik tiap input
+    inputLog.forEach((entry) => {
+      const x = (entry.time / maxTime) * w;
+      const y = entry.correct ? h - 40 - (entry.streak * 5) : h - 10;
+      ctx.beginPath();
+      ctx.fillStyle = entry.correct ? "#c3e88d" : "#ff5370";
+      ctx.arc(x, y, 4, 0, Math.PI * 2);
+      ctx.fill();
+    });
+
+    // Gambar garis streak benar
+    ctx.beginPath();
+    ctx.strokeStyle = "#8e7cc3";
+    ctx.lineWidth = 2;
+    let started = false;
+    inputLog.forEach((entry, i) => {
+      if (entry.correct) {
+        const x = (entry.time / maxTime) * w;
+        const y = h - 40 - (entry.streak * 5);
+        if (!started) {
+          ctx.moveTo(x, y);
+          started = true;
+        } else {
+          ctx.lineTo(x, y);
+        }
+      } else {
+        started = false;
+      }
+    });
+    ctx.stroke();
+  }
+
+  // Power-up freeze timer
+  freezeBtn.addEventListener("click", () => {
+    if (!freezeBtn.disabled) {
+      clearInterval(timerInterval);
+      setTimeout(() => {
+        if (timeLeft > 0 && !inputBox.disabled) {
+          timerInterval = setInterval(() => {
+            timeLeft--;
+            updateTimer();
+            updateStats();
+            drawGraph();
+            if (timeLeft <= 0) {
+              endGame("Waktu habis!");
+            }
+          }, 1000);
+        }
+      }, 5000);
+      freezeBtn.disabled = true;
+    }
+  });
+
+  // Event input utama
+  inputBox.addEventListener("input", (e) => {
+    startGame();
+
+    const val = inputBox.value;
+    totalTyped++;
+    if (val.length === 0) return;
+
+    const expectedChar = currentText[currentPos];
+    const typedChar = val[val.length - 1];
+
+    if (typedChar === expectedChar) {
+      correctTyped++;
+      currentPos++;
+      currentStreak++;
+      if (currentStreak > maxStreak) maxStreak = currentStreak;
+
+      inputLog.push({ time: 30 - timeLeft, correct: true, streak: currentStreak });
+
+      // Cek menang streak dan beri power-up
+      if (currentStreak >= 5) {
+        freezeBtn.disabled = false;
+      }
+
+      // Jika sudah sampai akhir kalimat, game menang
+      if (currentPos >= currentText.length) {
+        winStreak++;
+        currentStreak = 0;
+        resetGame();
+      }
+    } else {
+      incorrectCount++;
+      currentStreak = 0;
+      inputLog.push({ time: 30 - timeLeft, correct: false, streak: 0 });
+      if (incorrectCount >= maxIncorrect) {
+        endGame("Terlalu banyak kesalahan!");
+      }
+    }
+    renderText();
+    updateStats();
+  });
+
+  resetBtn.addEventListener("click", () => {
+    resetGame();
+  });
+
+  // Inisialisasi awal
+  resetGame();
+</script>
+
+</body>
+</html>
